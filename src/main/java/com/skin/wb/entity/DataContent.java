@@ -10,9 +10,21 @@ import lombok.Data;
 @Data
 public class DataContent {
 
+    /**
+     * 用户id
+     */
     private String userId;
+    /**
+     * 用户信息
+     */
     private String message;
+    /**
+     * 消息类型
+     */
     private Integer type;
+    /**
+     * 接受到的用户
+     */
     private String toId;
 
 }

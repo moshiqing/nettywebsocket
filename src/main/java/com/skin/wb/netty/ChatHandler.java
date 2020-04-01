@@ -1,9 +1,9 @@
 package com.skin.wb.netty;
 
 import com.alibaba.fastjson.JSON;
+import com.skin.wb.enums.ChatTypes;
 import com.skin.wb.enums.RedisEnums;
 import com.skin.wb.entity.DataContent;
-import com.skin.wb.service.KafkaMessageSend;
 import com.skin.wb.utils.BeanUtil;
 import com.skin.wb.utils.UserUtil;
 import io.netty.channel.Channel;
@@ -28,7 +28,7 @@ public class ChatHandler extends SimpleChannelInboundHandler<TextWebSocketFrame>
 
     RedisTemplate redisTemplate = BeanUtil.getBean(RedisTemplate.class);
 
-    KafkaMessageSend kafkaMessageSend = BeanUtil.getBean(KafkaMessageSend.class);
+//    KafkaMessageSend kafkaMessageSend = BeanUtil.getBean(KafkaMessageSend.class);
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, TextWebSocketFrame msg){
@@ -39,22 +39,35 @@ public class ChatHandler extends SimpleChannelInboundHandler<TextWebSocketFrame>
         DataContent dataContent = JSON.parseObject(msg.text(),DataContent.class);
         String userId=dataContent.getUserId();
         Channel channel = ctx.channel();
-        Integer type =1;
-        if(dataContent.getType().equals(type)){
+        if(dataContent.getType().equals(ChatTypes.register.getValue())){
             redisTemplate.delete(RedisEnums.USERSCHANNEL.getValue()+userId);
             UserUtil.setUser(userId,channel);
             userOnline(userId,ctx);
-        }else{
+        }else if(dataContent.getType().equals(ChatTypes.Single.getValue())){
+            //开始单人聊天
             System.out.println("服务端获取到的信息："+dataContent.getMessage());
             String toId = dataContent.getToId();
+            //用户是否是系统内在线，并且存在这个服务器内的 不在线则直接离线 在线就直接确定服务器
             Channel user = UserUtil.getUser(toId);
             if(user==null){
                 System.out.println("系统找不到用户,需要向kafka发送订阅信息");
-                kafkaMessageSend.sendMessage("serverMessage",JSON.toJSONString(dataContent));
+                redisTemplate.convertAndSend("serverMessage",JSON.toJSONString(dataContent));
             }else{
-                System.out.println("直接发送信息");
-                user.writeAndFlush(dataContent);
+                Channel currentChannel = channelGroup.find(user.id());
+                if(currentChannel==null){
+                    System.out.println("用户在channel已经被移除了,已经下线");
+                    //todo 保存聊天信息到数据库，为未接收状态
+                }else{
+                    System.out.println("直接发送信息");
+                    currentChannel.writeAndFlush(dataContent);
+                }
             }
+        }else if(dataContent.getType().equals(ChatTypes.gourp.getValue())){
+            //异步发送群组在线用户
+            //1.在本机用户直接发送
+            //2.查找非本机用户发送到指定的主题
+            //离线用户直接存聊天记录
+
         }
     }
 
@@ -72,6 +85,7 @@ public class ChatHandler extends SimpleChannelInboundHandler<TextWebSocketFrame>
 
     @Override
     public void handlerRemoved(ChannelHandlerContext ctx){
+        channelGroup.remove(ctx.channel());
     }
 
     @Override
@@ -81,6 +95,7 @@ public class ChatHandler extends SimpleChannelInboundHandler<TextWebSocketFrame>
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause){
+        channelGroup.remove(ctx.channel());
     }
 
     /**
@@ -97,15 +112,4 @@ public class ChatHandler extends SimpleChannelInboundHandler<TextWebSocketFrame>
         InetSocketAddress serverAddress = (InetSocketAddress) ctx.channel().localAddress();
         redisTemplate.opsForSet().add(RedisEnums.NETTYUSERSERVER.getValue()+":"+serverAddress.getAddress().getHostAddress()+":"+serverAddress.getPort(),userId);
     }
-
-//    /**
-//     * 用户下线
-//     * @param ctx
-//     */
-//    private void userOffline(String userId,ChannelHandlerContext ctx){
-//        InetSocketAddress k = (InetSocketAddress) ctx.channel().remoteAddress();
-//        int clientPort = k.getPort();
-//        String clienthostAddress = k.getAddress().getHostAddress();
-//        redisTemplate.opsForSet().remove(RedisEnums.USERSCHANNEL.getValue()+":"+clienthostAddress,clienthostAddress + ":" + clientPort);
-//    }
 }
